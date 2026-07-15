@@ -14,6 +14,9 @@ class SessionOut(BaseModel):
     video_duration: float
     started_at: datetime
 
+class SessionDurationUpdate(BaseModel):
+    video_duration: float = Field(gt=0, le=86400)
+
 class EventCreate(BaseModel):
     event_type: EventType
     position: float = Field(ge=0, le=86400)
