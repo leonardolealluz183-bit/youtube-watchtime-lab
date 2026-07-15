@@ -95,7 +95,7 @@ def calculate_metrics(sessions: list[WatchSession]) -> dict:
     retention = defaultdict(int)
     completions = 0
     for session in sessions:
-        intervals = _watched_intervals(sorted(session.events, key=lambda e: e.occurred_at))
+        intervals = _watched_intervals(sorted(session.events, key=lambda e: e.occurred_at or datetime.min))
         watched = _union_seconds(intervals)
         per_session.append(watched)
         duration = session.video_duration
