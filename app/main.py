@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
 from .models import WatchEvent, WatchSession
-from .schemas import EventCreate, MetricsOut, SessionCreate, SessionOut
+from .schemas import EventCreate, MetricsOut, SessionCreate, SessionDurationUpdate, SessionOut
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="YouTube Watchtime Lab")
@@ -37,11 +37,23 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
     db.refresh(session)
     return session
 
+@app.patch("/api/sessions/{session_id}/duration", response_model=SessionOut)
+def update_session_duration(session_id: str, payload: SessionDurationUpdate, db: Session = Depends(get_db)):
+    session = db.get(WatchSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    session.video_duration = payload.video_duration
+    db.commit()
+    db.refresh(session)
+    return session
+
 @app.post("/api/sessions/{session_id}/events", status_code=201)
 def record_event(session_id: str, payload: EventCreate, db: Session = Depends(get_db)):
     session = db.get(WatchSession, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    if payload.duration > 0:
+        session.video_duration = payload.duration
     if payload.event_type == "ended":
         session.ended_at = datetime.utcnow()
     event = WatchEvent(
@@ -59,9 +71,9 @@ def record_event(session_id: str, payload: EventCreate, db: Session = Depends(ge
 def _watched_intervals(events: list[WatchEvent]) -> list[tuple[float, float]]:
     intervals = []
     for event in events:
-        if event.event_type not in {"progress", "ended"} or event.previous_position is None:
+        if event.event_type not in {"progress", "pause", "buffering", "ended"} or event.previous_position is None:
             continue
-        start, end = sorted((event.previous_position, event.position))
+        start, end = event.previous_position, event.position
         if end - start > 0 and end - start <= 15:
             intervals.append((start, end))
     return intervals
@@ -86,7 +98,7 @@ def calculate_metrics(sessions: list[WatchSession]) -> dict:
         intervals = _watched_intervals(sorted(session.events, key=lambda e: e.occurred_at))
         watched = _union_seconds(intervals)
         per_session.append(watched)
-        duration = session.video_duration or max([e.position for e in session.events] + [0])
+        duration = session.video_duration
         if duration and watched / duration >= 0.9:
             completions += 1
         covered = set()
@@ -101,7 +113,7 @@ def calculate_metrics(sessions: list[WatchSession]) -> dict:
     avg = round(total / session_count, 2) if session_count else 0
     avg_pct_values = []
     for session, watched in zip(sessions, per_session):
-        duration = session.video_duration or max([e.position for e in session.events] + [0])
+        duration = session.video_duration
         avg_pct_values.append((watched / duration * 100) if duration else 0)
     curve = [{"bucket": b, "viewers": retention[b], "percent": round(retention[b] / session_count * 100, 2) if session_count else 0} for b in sorted(retention)]
     dropoffs = []
